@@ -14,6 +14,7 @@ from .utils import (
     highlight_exceeding,
     print_general_info,
     print_tasks_by_assignee,
+    safe_percentage,
 )
 
 app = typer.Typer()
@@ -231,13 +232,13 @@ def ratio(
         time_total = time_maintenance + time_product
         maintenance_str = (
             f"MAINTENANCE: {maintenance:5.2f}"
-            f" / {maintenance / total * 100:4.1f} %"
-            f" / ⏱ {time_maintenance / time_total * 100:4.1f} %"
+            f" / {safe_percentage(maintenance, total):4.1f} %"
+            f" / ⏱ {safe_percentage(time_maintenance, time_total):4.1f} %"
         )
         product_str = (
             f"PRODUCT: {product:5.2f}"
-            f" / {product / total * 100:4.1f} %"
-            f" / ⏱ {time_product / time_total * 100:4.1f} %"
+            f" / {safe_percentage(product, total):4.1f} %"
+            f" / ⏱ {safe_percentage(time_product, time_total):4.1f} %"
         )
 
         if fix_version in team_config.working_days_per_sprint:

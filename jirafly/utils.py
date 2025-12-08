@@ -6,6 +6,10 @@ from termcolor import colored
 from .models import UNASSIGNED, MemberPlan, Task
 
 
+def safe_percentage(part, total):
+    return (part / total * 100) if total != 0 else 0
+
+
 def format_seconds(seconds):
     work_days, seconds = divmod(seconds, 28800)  # 8 * 3600
     hours, seconds = divmod(seconds, 3600)
