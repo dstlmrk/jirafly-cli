@@ -156,8 +156,8 @@ def ratio(
 
     tasks: dict[str, dict[str, Any]] = defaultdict(
         lambda: {
-            "ratio": {"Maintenance": 0, "Bug": 0, "Product": 0, "Excluded": 0},
-            "time": {"Maintenance": 0, "Bug": 0, "Product": 0, "Excluded": 0},
+            "ratio": {"Maintenance": 0, "Bug": 0, "Product": 0, "AI": 0, "Excluded": 0},
+            "time": {"Maintenance": 0, "Bug": 0, "Product": 0, "AI": 0, "Excluded": 0},
             "tasks": [],
         }
     )
@@ -183,17 +183,19 @@ def ratio(
         "Status",
     ]
 
-    total_maintenance = total_product = total_excluded = 0
+    total_maintenance = total_product = total_excluded = total_ai = 0
     time_total_maintenance = time_total_product = 0
 
     for _, (fix_version, data) in enumerate(sorted_tasks.items()):
         maintenance = data["ratio"]["Maintenance"]
         product = data["ratio"]["Product"] + data["ratio"]["Bug"]
         excluded = data["ratio"]["Excluded"]
+        ai = data["ratio"]["AI"]
 
         total_maintenance += maintenance
         total_product += product
         total_excluded += excluded
+        total_ai += ai
 
         time_maintenance = data["time"]["Maintenance"]
         time_product = data["time"]["Product"] + data["time"]["Bug"]
@@ -243,7 +245,7 @@ def ratio(
 
         if fix_version in team_config.working_days_per_sprint:
             working_days_total = team_config.working_days_per_sprint[fix_version].total
-            efficiency = f"{(total + excluded) / working_days_total:.2f}"
+            efficiency = f"{(total + excluded + ai) / working_days_total:.2f}"
             efficiency_str = (
                 f"{colored(efficiency, 'black', on_color='on_yellow', attrs=['bold'])}"
             )
@@ -257,7 +259,7 @@ def ratio(
                 "",
                 "",
                 colored(f"{maintenance_str}  |  {product_str}", attrs=["bold"]),
-                colored(f"{total + excluded:.2f}", attrs=["bold"]),
+                colored(f"{total + excluded + ai:.2f}", attrs=["bold"]),
                 format_seconds(time_total_spent),
                 efficiency_str,
                 working_days_total,
@@ -283,7 +285,7 @@ def ratio(
             "",
             colored("Total", attrs=["bold"]),
             colored(f"{maintenance_str}  |  {product_str}", attrs=["bold"]),
-            f"{_total + total_excluded:.2f}",
+            f"{_total + total_excluded + total_ai:.2f}",
             "",
             "",
             "",

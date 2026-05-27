@@ -68,6 +68,8 @@ class Task:
         labels = fields.get("labels", [])
         if any(label in labels for label in ["RatioExcluded", "Bughunting"]):
             task.ratio_type = "Excluded"
+        elif "AI" in labels:
+            task.ratio_type = "AI"
         elif any(label in labels for label in ["Maintenance", "DevOps"]):
             task.ratio_type = "Maintenance"
         elif task.type == "Bug":
@@ -122,6 +124,8 @@ class Task:
             color = "cyan"
         elif self.ratio_type == "Excluded":
             color = "light_magenta"
+        elif self.ratio_type == "AI":
+            color = "yellow"
 
         formatted_title = f"{self.type_fmt} {colored(title, color)}"
         return f"{formatted_title}\n{self.url_fmt}" if verbose else f"{formatted_title}"
