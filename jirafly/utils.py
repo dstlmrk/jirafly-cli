@@ -47,6 +47,7 @@ def print_general_info(tasks_by_assignee: dict[str, MemberPlan], current_sprint:
         "Maintenance": 0.0,
         "Bug": 0.0,
         "Product": 0.0,
+        "AI": 0.0,
         "Excluded": 0.0,
     }
     hle_assigned = deepcopy(hle_all)
@@ -57,9 +58,12 @@ def print_general_info(tasks_by_assignee: dict[str, MemberPlan], current_sprint:
             if task.is_assigned:
                 hle_assigned[task.ratio_type] += task.hle
 
-    total = hle_all["Maintenance"] + hle_all["Bug"] + hle_all["Product"]
+    total = hle_all["Maintenance"] + hle_all["Bug"] + hle_all["Product"] + hle_all["AI"]
     total_assigned = (
-        hle_assigned["Maintenance"] + hle_assigned["Bug"] + hle_assigned["Product"]
+        hle_assigned["Maintenance"]
+        + hle_assigned["Bug"]
+        + hle_assigned["Product"]
+        + hle_assigned["AI"]
     )
 
     print(
@@ -73,13 +77,26 @@ def print_general_info(tasks_by_assignee: dict[str, MemberPlan], current_sprint:
     table.add_row(["", "Assigned", "All"], divider=True)
     table.add_row(
         [
-            colored(" Maintenance ", color="black", on_color="on_cyan"),
+            colored(" AI", color="yellow"),
             colored(
-                f"{hle_assigned['Maintenance']:.2f} MD ({hle_assigned['Maintenance'] / total_assigned * 100:5.2f} %)",
+                f"{hle_assigned['AI']:.2f} MD ({safe_percentage(hle_assigned['AI'], total_assigned):5.2f} %)",
+                color="yellow",
+            ),
+            colored(
+                f"{hle_all['AI']:.2f} MD ({safe_percentage(hle_all['AI'], total):5.2f} %)",
+                color="yellow",
+            ),
+        ],
+    )
+    table.add_row(
+        [
+            colored(" Maintenance", color="cyan"),
+            colored(
+                f"{hle_assigned['Maintenance']:.2f} MD ({safe_percentage(hle_assigned['Maintenance'], total_assigned):5.2f} %)",
                 color="cyan",
             ),
             colored(
-                f"{hle_all['Maintenance']:.2f} MD ({hle_all['Maintenance'] / total * 100:5.2f} %)",
+                f"{hle_all['Maintenance']:.2f} MD ({safe_percentage(hle_all['Maintenance'], total):5.2f} %)",
                 color="cyan",
             ),
         ],
@@ -87,20 +104,20 @@ def print_general_info(tasks_by_assignee: dict[str, MemberPlan], current_sprint:
     table.add_row(
         [
             " Bugs",
-            f"{hle_assigned['Bug']:.2f} MD ({hle_assigned['Bug'] / total_assigned * 100:5.2f} %)",
-            f"{hle_all['Bug']:.2f} MD ({hle_all['Bug'] / total * 100:5.2f} %)",
+            f"{hle_assigned['Bug']:.2f} MD ({safe_percentage(hle_assigned['Bug'], total_assigned):5.2f} %)",
+            f"{hle_all['Bug']:.2f} MD ({safe_percentage(hle_all['Bug'], total):5.2f} %)",
         ],
     )
     table.add_row(
         [
             " Product",
-            f"{hle_assigned['Product']:.2f} MD ({hle_assigned['Product'] / total_assigned * 100:5.2f} %)",
-            f"{hle_all['Product']:.2f} MD ({hle_all['Product'] / total * 100:5.2f} %)",
+            f"{hle_assigned['Product']:.2f} MD ({safe_percentage(hle_assigned['Product'], total_assigned):5.2f} %)",
+            f"{hle_all['Product']:.2f} MD ({safe_percentage(hle_all['Product'], total):5.2f} %)",
         ],
     )
     table.add_row(
         [
-            colored(" Excluded ", color="black", on_color="on_magenta"),
+            colored(" Excluded", color="magenta"),
             colored(f"{hle_assigned['Excluded']:.2f} MD", color="magenta"),
             colored(f"{hle_all['Excluded']:.2f} MD", color="magenta"),
         ],
