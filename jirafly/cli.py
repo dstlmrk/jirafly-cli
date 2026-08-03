@@ -6,12 +6,23 @@ import typer
 from prettytable import PrettyTable
 from termcolor import colored
 
+from . import sprints
+from .absence_store import build_snapshot
+from .absence_store import load as load_snapshot
+from .absence_store import save as save_snapshot
 from .jira_service import JiraClient
 from .models import MemberPlan
+from .pinya_service import (
+    PinyaClient,
+    PinyaError,
+    absence_days_by_member,
+)
 from .team_config import load_team_config
 from .utils import (
     format_seconds,
     highlight_exceeding,
+    print_absence_calendar,
+    print_absences,
     print_general_info,
     print_tasks_by_assignee,
     safe_percentage,
@@ -37,6 +48,55 @@ def parse_member_option(values: list[str]) -> dict[str, tuple[float, float]]:
                 f"Invalid member format '{value}'. Expected: nickname=wd,vel (e.g., peter=7.0,0.3)"
             ) from e
     return result
+
+
+def apply_attendance(
+    sprint: str,
+    team_config,
+    team_members: dict[str, tuple[float, float]],
+    overrides: dict[str, tuple[float, float]],
+) -> dict[str, tuple[float, float]]:
+    """Fill working days from stored Pinya attendance.
+
+    Precedence: explicit --member wins, then the stored snapshot, then the
+    nominal wd from team.yaml. Velocity always stays from the config - Pinya
+    knows nothing about it.
+    """
+    snapshot = load_snapshot(sprint)
+    if not snapshot:
+        print(
+            f"ℹ️  No stored attendance for {sprint}, using nominal wd from config.\n"
+            f"   Run: jirafly absences {sprint}"
+        )
+        return team_members
+
+    explicit = {
+        name
+        for nickname, (name, _, _) in team_config.to_nickname_dict().items()
+        if nickname in overrides
+    }
+
+    applied = []
+    for name, (wd, vel) in team_members.items():
+        if name in explicit:
+            continue
+        stored = snapshot.working_days_for(name)
+        if stored is None:
+            continue
+        team_members[name] = (stored, vel)
+        if stored != wd:
+            applied.append(f"{name}: {wd:g} → {stored:g}")
+
+    print(f"📥 Attendance from Pinya ({sprint}, fetched {snapshot.fetched_at_display})")
+    if applied:
+        for line in applied:
+            print(f"   {line}")
+    else:
+        print("   no change against nominal wd")
+    if skipped := explicit & set(team_members):
+        print(f"   kept from --member: {', '.join(sorted(skipped))}")
+
+    return team_members
 
 
 @app.command()
@@ -99,6 +159,12 @@ def planning(
         override_summary = team_config.get_override_summary(parsed_overrides)
         if override_summary:
             print(override_summary)
+
+        # Attendance downloaded by `absences` fills in working days for everyone
+        # not set explicitly on the command line.
+        team_members = apply_attendance(
+            sprint, team_config, team_members, parsed_overrides
+        )
 
     except Exception as e:
         print(f"Error loading team config: {e}")
@@ -372,3 +438,97 @@ def update_fix_versions(
             print(f"  [{i}/{len(tasks_without_fix_version)}] ❌ {task._key}: {e}")
 
     print(f"\n✅ Updated {len(tasks_without_fix_version)} tasks")
+
+
+@app.command()
+def absences(
+    sprint: str = typer.Argument(
+        "current",
+        help="Sprint identifier (e.g., 6.34), or current/prev/next/-2",
+    ),
+    team: Path = typer.Argument(
+        Path("configs/team.yaml"), help="Path to team config YAML file", exists=True
+    ),
+    pinya_url: str = typer.Option(
+        ...,
+        envvar="PINYA_URL",
+        help="Pinya HR base URL (e.g. https://yourcompany.pinya.hr).",
+    ),
+    as_yaml: bool = typer.Option(
+        False,
+        "--yaml",
+        help="Print a working_days_per_sprint block ready to paste into team.yaml.",
+    ),
+    include_indirect: bool = typer.Option(
+        False, "--include-indirect", help="Include indirect subordinates."
+    ),
+    no_save: bool = typer.Option(
+        False, "--no-save", help="Do not store the snapshot for planning to use."
+    ),
+):
+    """Download team attendance from Pinya HR and store it for planning.
+
+    Working days per member are the nominal wd from team.yaml minus absences
+    booked in Pinya minus public holidays falling inside the sprint. The result
+    is saved, so `planning` can use it without touching Pinya again.
+    """
+    try:
+        target = sprints.parse(sprint)
+    except sprints.SprintError as exc:
+        print(f"Error: {exc}")
+        raise typer.Exit(1) from exc
+
+    try:
+        team_config = load_team_config(team)
+    except Exception as exc:
+        print(f"Error loading team config: {exc}")
+        raise typer.Exit(1) from exc
+
+    print(f"📋 Loaded team from {team}")
+    print(f"📅 {target.describe()}")
+
+    try:
+        with PinyaClient(base_url=pinya_url) as pinya:
+            roster = pinya.team(include_indirect=include_indirect)
+            records = pinya.absence_records(include_indirect=include_indirect)
+            holidays = pinya.public_holidays(target.start, target.end)
+    except PinyaError as exc:
+        print(f"Error: {exc}")
+        raise typer.Exit(1) from exc
+
+    # Only members listed in team.yaml are reported on; Pinya may know more
+    # people than the team we plan for.
+    known_names = {member.name for member in team_config.members}
+    roster = {
+        employee_id: name for employee_id, name in roster.items() if name in known_names
+    }
+    if missing := known_names - set(roster.values()):
+        print(f"⚠️  Not found in Pinya: {', '.join(sorted(missing))}")
+
+    breakdown = absence_days_by_member(records, roster, target.start, target.end)
+
+    # Holidays on business days reduce everyone's capacity, and Pinya does not
+    # report them as absences.
+    business_holidays = [(day, name) for day, name in holidays if day.weekday() < 5]
+
+    snapshot = build_snapshot(
+        sprint=target,
+        members=team_config.members,
+        breakdown=breakdown,
+        holidays=business_holidays,
+    )
+
+    member_order = [member.name for member in team_config.members]
+
+    print_absences(
+        sprint=target,
+        snapshot=snapshot,
+        member_order=member_order,
+        rejected=breakdown.rejected,
+        as_yaml=as_yaml,
+    )
+    print_absence_calendar(sprint=target, snapshot=snapshot, member_order=member_order)
+
+    if not no_save:
+        path = save_snapshot(snapshot)
+        print(f"\n💾 Saved to {path} — planning will use these numbers")

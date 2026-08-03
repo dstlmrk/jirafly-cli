@@ -1,9 +1,16 @@
 from copy import deepcopy
+from datetime import date
+from typing import TYPE_CHECKING
 
 from prettytable import PrettyTable
 from termcolor import colored
 
 from .models import UNASSIGNED, MemberPlan, Task
+
+if TYPE_CHECKING:
+    from .absence_store import AbsenceSnapshot, MemberAbsence
+    from .pinya_service import AbsenceRecord
+    from .sprints import Sprint
 
 
 def safe_percentage(part, total):
@@ -196,3 +203,172 @@ def print_tasks_by_assignee(
         else:
             table.align[field] = "l"
     print(table)
+
+
+def fmt_days(value: float) -> str:
+    """Days without trailing zeros: 1.5 stays 1.5, 3.0 becomes 3."""
+    return f"{value:g}" if value else "-"
+
+
+def print_absences(
+    sprint: "Sprint",
+    snapshot: "AbsenceSnapshot",
+    member_order: list[str],
+    rejected: list["AbsenceRecord"],
+    as_yaml: bool,
+):
+    """Render a downloaded attendance snapshot."""
+    if snapshot.holidays:
+        print(f"🎉 Public holidays in sprint: {len(snapshot.holidays)}")
+        for raw_day, name in snapshot.holidays:
+            print(f"   {date.fromisoformat(raw_day):%d.%m.%Y} {name}")
+    else:
+        print("🎉 Public holidays in sprint: none")
+
+    absence_types = sorted(
+        {t for entry in snapshot.members.values() for t in entry.by_type}
+    )
+
+    table = PrettyTable()
+    table.field_names = ["Member", "Nom.", *absence_types, "Absent", "Hol.", "WD"]
+
+    # Config order is kept so the generated YAML comment matches how the file is
+    # already written by hand.
+    for name in member_order:
+        entry = snapshot.members.get(name)
+        if not entry:
+            continue
+        table.add_row(
+            [
+                name,
+                fmt_days(entry.nominal_wd),
+                *[fmt_days(entry.by_type.get(t, 0.0)) for t in absence_types],
+                fmt_days(entry.absent_days),
+                fmt_days(entry.holiday_days),
+                colored(
+                    fmt_days(entry.working_days),
+                    "yellow" if entry.working_days < entry.nominal_wd else None,
+                ),
+            ]
+        )
+
+    for field in table.field_names:
+        table.align[field] = "l" if field == "Member" else "r"
+    print(table)
+
+    print(
+        f"Total working days: "
+        f"{colored(f' {snapshot.total_working_days:g} MD ', 'black', on_color='on_yellow')}"
+    )
+
+    if rejected:
+        print(f"\n⚠️  Rejected records (not counted): {len(rejected)}")
+        for record in rejected:
+            print(f"   {record.employee_name}: {record.type_name}, {record.term}")
+
+    if as_yaml:
+        breakdown = ", ".join(
+            f"{snapshot.members[name].nickname} = {snapshot.members[name].working_days:g}"
+            for name in member_order
+            if name in snapshot.members
+        )
+        print("\n# paste into configs/team.yaml under working_days_per_sprint:")
+        print(f'  "{sprint.label}": # {sprint.yaml_comment()}')
+        print(f"    total: {snapshot.total_working_days:g}  # {breakdown}")
+
+
+WEEKDAY_LABELS = ("Mo", "Tu", "We", "Th", "Fr")
+CELL_WIDTH = 2
+
+# Deliberately avoiding full blocks (█): they merge vertically between rows and
+# make neighbouring people's absences look like one shape.
+DAY_WORKING = "·"
+DAY_ABSENT = "■"
+DAY_HALF = "◧"
+DAY_HOLIDAY = "H"
+DAY_OFF = "░"
+
+
+def print_absence_calendar(
+    sprint: "Sprint",
+    snapshot: "AbsenceSnapshot",
+    member_order: list[str],
+):
+    """Draw the sprint's working days as a grid, one row per member.
+
+    Only Mon-Fri are shown; a standard sprint therefore has 10 columns, split
+    into calendar weeks.
+    """
+    days = sprint.business_days()
+    names = [name for name in member_order if name in snapshot.members]
+    if not days or not names:
+        return
+
+    holidays = {date.fromisoformat(raw) for raw, _ in snapshot.holidays}
+    label_width = max(len(name) for name in names)
+
+    def row(cells: list[str], label: str = "") -> str:
+        return (f"{label:<{label_width}}  " + " ".join(cells)).rstrip()
+
+    def header(render) -> list[str]:
+        cells: list[str] = []
+        previous_week = None
+        for day in days:
+            week = day.isocalendar().week
+            if previous_week is not None and week != previous_week:
+                cells.append("|")
+            cells.append(render(day).center(CELL_WIDTH))
+            previous_week = week
+        return cells
+
+    # Month number, printed only where it changes - a sprint can end in the next
+    # month, and repeating it in every column is just noise.
+    months_seen: set[int] = set()
+
+    def month_label(day: date) -> str:
+        if day.month in months_seen:
+            return ""
+        months_seen.add(day.month)
+        return f"{day.month:02d}"
+
+    print(f"\n📆 {sprint.label} day by day")
+    print(row(header(month_label)))
+    print(row(header(lambda d: WEEKDAY_LABELS[d.weekday()])))
+    print(row(header(lambda d: f"{d.day:02d}")))
+
+    for name in names:
+        entry = snapshot.members[name]
+        cells: list[str] = []
+        previous_week = None
+        for day in days:
+            week = day.isocalendar().week
+            if previous_week is not None and week != previous_week:
+                cells.append("|")
+            cells.append(_render_day(day, entry, holidays))
+            previous_week = week
+        print(row(cells, name))
+
+    legend = "   ".join(
+        [
+            f"{DAY_WORKING} working",
+            colored(f"{DAY_ABSENT} absent", "red"),
+            colored(f"{DAY_HALF} half day", "yellow"),
+            colored(f"{DAY_HOLIDAY} holiday", "cyan"),
+            colored(f"{DAY_OFF} not working", "blue"),
+        ]
+    )
+    print(f"\n{'':<{label_width}}  {legend}")
+
+
+def _render_day(day: date, entry: "MemberAbsence", holidays: set[date]) -> str:
+    # A day the member never works outranks a holiday - it costs them nothing.
+    if not entry.works_on(day):
+        return colored(DAY_OFF.center(CELL_WIDTH), "blue")
+    if day in holidays:
+        return colored(DAY_HOLIDAY.center(CELL_WIDTH), "cyan")
+    booked = entry.days_off_on(day)
+    if booked <= 0:
+        return DAY_WORKING.center(CELL_WIDTH)
+    if booked >= 1:
+        return colored(DAY_ABSENT.center(CELL_WIDTH), "red")
+    return colored(DAY_HALF.center(CELL_WIDTH), "yellow")
