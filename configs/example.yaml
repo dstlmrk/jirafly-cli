@@ -9,8 +9,9 @@ members:
 
   - name: "Jane Smith"
     nickname: jane
-    wd: 4.0    # Part-time team member
-    vel: 0.8   # Higher productivity
+    wd: 8.0          # Part-time team member
+    vel: 0.8         # Higher productivity
+    off_days: [Fr]   # Four-day week
 
   - name: "Bob Johnson"
     nickname: bob
@@ -21,5 +22,8 @@ members:
 # - name: Full name of the team member (must be unique)
 # - wd: Working days in the sprint (0-10, can include decimals for part-time)
 # - vel: Velocity factor
+# - off_days: Optional weekdays never worked (Mo/Tu/We/Th/Fr). Used by the
+#   `absences` command: a public holiday falling on a day the member does not
+#   work costs them nothing.
 #
 # The planning tool will calculate capacity as: wd * vel for each member

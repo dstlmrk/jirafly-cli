@@ -25,6 +25,11 @@ dev = [
     "ruff>=0.11.13",
     "pre-commit>=4.2.0",
 ]
+# Pinya HR absence scraping needs a real browser (Azure SSO with MFA cannot be
+# automated). Kept optional so the browser download is not forced on everyone.
+pinya = [
+    "playwright>=1.49.0",
+]
 
 [build-system]
 requires = ["hatchling"]

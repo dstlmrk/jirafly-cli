@@ -3,6 +3,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+WEEKDAY_NAMES = ("Mo", "Tu", "We", "Th", "Fr")
+
 
 class TeamMember(BaseModel):
     """Configuration for a single team member."""
@@ -28,6 +30,27 @@ class TeamMember(BaseModel):
         gt=0,
         description="Velocity/productivity factor",
     )
+    off_days: list[str] = Field(
+        default=[],
+        description="Weekdays not worked, e.g. ['Fr'] for a four-day week",
+    )
+
+    @field_validator("off_days")
+    @classmethod
+    def off_days_must_be_weekdays(cls, v):
+        normalized = []
+        for day in v:
+            match = day.strip().title()[:2]
+            if match not in WEEKDAY_NAMES:
+                raise ValueError(
+                    f"Invalid off_day {day!r}, expected one of {', '.join(WEEKDAY_NAMES)}"
+                )
+            normalized.append(match)
+        return normalized
+
+    def off_weekdays(self) -> set[int]:
+        """off_days as Python weekday numbers (Mo = 0)."""
+        return {WEEKDAY_NAMES.index(day) for day in self.off_days}
 
     @field_validator("name")
     @classmethod
